@@ -1,67 +1,34 @@
 import streamlit as st
-import requests
-from bs4 import BeautifulSoup
-import re
+from datetime import datetime, timedelta
 
-def get_next_chronological_race():
-    # URL targeting the UK Racing Tips model on the AU Hub
-    url = "https://www.betfair.com.au/hub/models/uk-racing-tips/"
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code != 200:
-            return "Error: Could not access Hub."
+st.set_page_config(page_title="BHUB: CSV Link Fixer", layout="wide")
+st.title("🏇 Betfair Hub: Live CSV Finder")
 
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # 1. Find all race blocks
-        # The Hub nests race names in <h3> or <h4> and countdowns in <span> tags
-        races = []
-        
-        # Finding the 'Meeting' context (e.g., Bangor-On-Dee)
-        # In the Hub HTML, these are often grouped by track-filter-buttons
-        active_meeting = "Unknown Location"
-        track_elements = soup.find_all('button', class_=re.compile('track-filter'))
-        for track in track_elements:
-            if 'active' in track.get('class', []):
-                active_meeting = track.get_text().strip()
+# 1. DATE LOGIC: Find the UK "Today" (even if you are in AU)
+# If it's late in AU, the UK races are often listed under 'tomorrow's' date
+now = datetime.now()
+date_today = now.strftime("%Y-%m-%d")
+date_tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
 
-        # 2. Extract Race Name and Countdown
-        # We look for the countdown pattern (00:00:00)
-        timers = soup.find_all(text=re.compile(r'\d{2}:\d{2}:\d{2}'))
-        
-        for timer in timers:
-            # Find the nearest heading above this timer
-            parent_section = timer.find_parent(['div', 'section'])
-            race_title = parent_section.find(['h3', 'h4'])
-            
-            if race_title:
-                races.append({
-                    "name": race_title.get_text().strip(),
-                    "location": active_meeting,
-                    "countdown": timer.strip()
-                })
+st.info(f"System Date: {date_today}")
 
-        # 3. Sort by smallest non-negative countdown
-        if races:
-            # Sorting logic: Smallest string value (since 00:02:39 < 00:32:39)
-            races.sort(key=lambda x: x['countdown'])
-            return races[0]
-            
-        return None
+# 2. THE GENERATOR
+def make_link(target_date):
+    base = "https://betfair-data-supplier-prod.herokuapp.com/api/widgets/kash-ratings-model/datasets"
+    params = f"?date={target_date}&presenter=RatingsPresenter&csv=true"
+    return base + params
 
-    except Exception as e:
-        return f"System Error: {e}"
+# 3. DISPLAY OPTIONS
+st.write("### Select the race date shown on your Betfair Hub screen:")
+col1, col2 = st.columns(2)
 
-# --- STREAMLIT UI ---
-st.title("Next Scheduled Race")
+with col1:
+    link_today = make_link(date_today)
+    st.link_button(f"📅 Download: {date_today}", link_today, use_container_width=True)
 
-if st.button("🔍 FIND NEXT RACE"):
-    result = get_next_chronological_race()
-    if isinstance(result, dict):
-        st.header(f"🏇 {result['name']}")
-        st.subheader(f"📍 Location: {result['location']}")
-        st.write(f"⏳ Countdown: {result['countdown']}")
-    else:
-        st.error(result if result else "No races found.")
+with col2:
+    link_tomorrow = make_link(date_tomorrow)
+    st.link_button(f"📅 Download: {date_tomorrow}", link_tomorrow, use_container_width=True)
+
+st.divider()
+st.warning("⚠️ **If it says 'Invalid':** Open the Betfair Hub in a separate tab first, then come back here and click. This 'wakes up' the server for your phone.")
