@@ -3,61 +3,43 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="BHUB: UK Time-Sync", layout="wide")
-st.title("🏇 BHUB: UK Auto-Lay Radar")
+# --- STEP 1: CONTEXT ---
+# Because you are using the AU Hub for UK races, we look at 'tomorrow' 
+# to capture the UK afternoon/evening sessions.
+target_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- TIMEZONE OVERRIDE ---
-# AU is ahead of UK. We need to check both dates.
-date_choice = st.sidebar.radio("Select Data Date:", ["Auto (UK Today)", "UK Tomorrow"])
-
-if date_choice == "Auto (UK Today)":
-    target_date = datetime.now().strftime("%Y-%m-%d")
-else:
-    target_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-
-# --- DATA ENGINE: DIRECT SCRAPE ---
-@st.cache_data(ttl=60)
-def get_uk_data(date_str):
-    url = f"https://betfair-data-supplier-prod.herokuapp.com/api/widgets/kash-ratings-model/datasets?date={date_str}&presenter=RatingsPresenter&csv=true"
+def get_next_race():
+    url = f"https://betfair-data-supplier-prod.herokuapp.com/api/widgets/kash-ratings-model/datasets?date={target_date}&presenter=RatingsPresenter&csv=true"
+    
     try:
         df = pd.read_csv(url)
-        # Use keywords to find columns because names change by region
-        name_col = [c for c in df.columns if 'runnerName' in c][-1]
-        rated_col = [c for c in df.columns if 'ratedPrice' in c][-1]
         
-        # In AU feeds for UK, Live Price is often 'lastPriceTraded' 
-        # or it falls back to the AI price if the market isn't 'In-Play'
-        price_cols = [c for c in df.columns if 'Price' in c and c != rated_col]
-        live_col = price_cols[0] if price_cols else rated_col
+        # 1. Identify the 'Race Time' and 'Meeting Name' columns
+        # The Hub uses 'meetings.races.startTime' and 'meetings.meetingName'
+        time_col = [c for c in df.columns if 'startTime' in c][-1]
+        meeting_col = [c for c in df.columns if 'meetingName' in c][-1]
         
-        # RULE: Odds < 6.0
-        df_filtered = df[df[rated_col] < 6.0].copy()
+        # 2. Convert string time to actual datetime objects for sorting
+        df[time_col] = pd.to_datetime(df[time_col])
         
-        # ANALYSIS: Value Gap
-        df_filtered['Gap'] = df_filtered[live_col] - df_filtered[rated_col]
+        # 3. Filter for races that haven't started yet (Current Time < Start Time)
+        # We use UTC comparison as the Hub data is usually in UTC
+        now_utc = datetime.utcnow()
+        future_races = df[df[time_col] > now_utc].sort_values(by=time_col)
         
-        res = df_filtered[[name_col, rated_col, live_col, 'Gap']]
-        res.columns = ['Horse', 'Rated Price', 'Live Price', 'Gap']
-        return res.sort_values(by='Gap', ascending=False)
-    except:
-        return pd.DataFrame()
+        if not future_races.empty:
+            next_race_time = future_races.iloc[0][time_col].strftime('%H:%M')
+            next_meeting = future_races.iloc[0][meeting_col]
+            return f"{next_race_time} {next_meeting}"
+        else:
+            return "No upcoming races found for the selected date."
+            
+    except Exception as e:
+        return f"Error connecting to Hub: {e}"
 
-# --- DISPLAY ---
-st.info(f"Checking UK Races for: **{target_date}**")
+# --- STEP 2: DISPLAY ---
+st.title("Next Scheduled Race")
 
-if st.button("🔄 REFRESH UK SELECTIONS"):
-    data = get_uk_data(target_date)
-    
-    if not data.empty:
-        st.subheader("🎯 Active UK Value Lays")
-        
-        # Summary Table
-        st.table(data.style.format({
-            "Rated Price": "{:.2f}",
-            "Live Price": "{:.2f}",
-            "Gap": "+{:.2f}"
-        }).apply(lambda x: ['background-color: #ff4b4b; color: white' if i == 0 else '' for i in range(len(x))], axis=1))
-        
-        st.success(f"**Top Drifter:** {data.iloc[0]['Horse']} (+{data.iloc[0]['Gap']:.2f} gap)")
-    else:
-        st.error(f"No data found for {target_date}. Try switching the date in the sidebar.")
+if st.button("🔍 IDENTIFY NEXT RACE"):
+    race_name = get_next_race()
+    st.header(f"🏇 {race_name}")
