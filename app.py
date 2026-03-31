@@ -1,51 +1,67 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+import re
 
-st.set_page_config(page_title="BHUB: Next Race", layout="wide")
-st.title("Next Scheduled Race")
-
-def get_next_race_from_web():
-    # We scrape the UK Racing Tips page directly
+def get_next_chronological_race():
+    # URL targeting the UK Racing Tips model on the AU Hub
     url = "https://www.betfair.com.au/hub/models/uk-racing-tips/"
+    headers = {'User-Agent': 'Mozilla/5.0'}
     
     try:
-        # Use a User-Agent to prevent being blocked
-        headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers, timeout=10)
-        
         if response.status_code != 200:
-            return "⚠️ Hub Website is currently unreachable."
+            return "Error: Could not access Hub."
 
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # We look for the track name and race number headings on the page
-        # These are usually in <h3> or <h4> tags on the Hub
-        race_headings = soup.find_all(['h3', 'h4'])
+        # 1. Find all race blocks
+        # The Hub nests race names in <h3> or <h4> and countdowns in <span> tags
+        races = []
         
-        next_race = None
-        for heading in race_headings:
-            text = heading.get_text().strip()
-            # Identifying a race heading like "R2. Bangor-On-Dee"
-            if "R" in text and "." in text:
-                next_race = text
-                break # We found the first one in the list
-                
-        return next_race if next_race else "No active races found on page."
+        # Finding the 'Meeting' context (e.g., Bangor-On-Dee)
+        # In the Hub HTML, these are often grouped by track-filter-buttons
+        active_meeting = "Unknown Location"
+        track_elements = soup.find_all('button', class_=re.compile('track-filter'))
+        for track in track_elements:
+            if 'active' in track.get('class', []):
+                active_meeting = track.get_text().strip()
+
+        # 2. Extract Race Name and Countdown
+        # We look for the countdown pattern (00:00:00)
+        timers = soup.find_all(text=re.compile(r'\d{2}:\d{2}:\d{2}'))
+        
+        for timer in timers:
+            # Find the nearest heading above this timer
+            parent_section = timer.find_parent(['div', 'section'])
+            race_title = parent_section.find(['h3', 'h4'])
+            
+            if race_title:
+                races.append({
+                    "name": race_title.get_text().strip(),
+                    "location": active_meeting,
+                    "countdown": timer.strip()
+                })
+
+        # 3. Sort by smallest non-negative countdown
+        if races:
+            # Sorting logic: Smallest string value (since 00:02:39 < 00:32:39)
+            races.sort(key=lambda x: x['countdown'])
+            return races[0]
+            
+        return None
 
     except Exception as e:
-        return f"Scrape Error: {e}"
+        return f"System Error: {e}"
 
-# --- DISPLAY ---
-if st.button("🔍 IDENTIFY NEXT RACE"):
-    with st.spinner("Reading Betfair Hub..."):
-        race_name = get_next_race_from_web()
-        
-        if race_name:
-            st.header(f"🏇 {race_name}")
-        else:
-            st.warning("Could not find any scheduled races. Check site status.")
+# --- STREAMLIT UI ---
+st.title("Next Scheduled Race")
 
-st.divider()
-st.caption(f"Last Attempt: {datetime.now().strftime('%H:%M:%S')}")
+if st.button("🔍 FIND NEXT RACE"):
+    result = get_next_chronological_race()
+    if isinstance(result, dict):
+        st.header(f"🏇 {result['name']}")
+        st.subheader(f"📍 Location: {result['location']}")
+        st.write(f"⏳ Countdown: {result['countdown']}")
+    else:
+        st.error(result if result else "No races found.")
