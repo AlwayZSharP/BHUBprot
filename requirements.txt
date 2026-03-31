@@ -1,3 +1,7 @@
 streamlit
 pandas
-requests
+easyocr
+opencv-python-headless
+Pillow
+streamlit-paste-button
+numpy
