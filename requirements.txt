@@ -1,6 +1,4 @@
 streamlit
 pandas
-easyocr
-numpy
-opencv-python-headless
 streamlit-paste-button
+opencv-python-headless
