@@ -1,5 +1,6 @@
 streamlit
 pandas
-pytesseract
-Pillow
+easyocr
+numpy
+opencv-python-headless
 streamlit-paste-button
