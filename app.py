@@ -1,76 +1,88 @@
 import streamlit as st
 import pandas as pd
-import time
-import random
+from datetime import datetime, timedelta
 
 # --- APP CONFIG ---
-st.set_page_config(page_title="Global Lay Hub", page_icon="🏇")
+st.set_page_config(page_title="Global Lay Hub", page_icon="🏇", layout="wide")
 
-st.title("🏇 Global Lay Hub (UK/AUS/IRE)")
-st.subheader("Automated Drifter Selection Engine")
+st.title("🏇 Global Lay Hub: Live Radar")
+st.subheader("Next 5 Chronological Races & AI Value Analysis")
 
-# --- SIMULATED DATA FETCHING (Replace with your API logic) ---
-def fetch_race_data():
-    # This represents the live feed of races for the day
-    races = [
-        {"time": "14:10", "loc": "Ascot", "horse": "Galloping Ghost", "odds": 4.5, "gap": 0.8, "is_bh1": False},
-        {"time": "14:30", "loc": "Wolv", "horse": "Slow Coach", "odds": 5.2, "gap": 1.5, "is_bh1": False},
-        {"time": "15:00", "loc": "Navan", "horse": "Desert Drift", "odds": 3.8, "gap": 2.1, "is_bh1": True},
-        {"time": "15:15", "loc": "Ascot", "horse": "Money Pit", "odds": 7.5, "gap": 3.0, "is_bh1": False},
-    ]
-    return races
-
-# --- MAIN APP INTERFACE ---
-if st.button("🚀 Fetch Today's Lays"):
-    with st.status("🔍 Scanning Global Markets...", expanded=True) as status:
-        all_races = fetch_race_data()
-        qualifiers = []
-
-        for race in all_races:
-            # UI Feedback: Show the user which race is being evaluated
-            st.write(f"Checking {race['time']} at {race['loc']}...")
-            time.sleep(0.3) # Brief pause so you can actually read the scan
-
-            # APPLYING YOUR RULES:
-            # 1. Must be under odds of 6.0
-            # 2. Identify the drifter
-            if race['odds'] < 6.0:
-                qualifiers.append(race)
+# --- SIMULATED LIVE FEED ---
+def get_next_5_races():
+    now = datetime.now()
+    # Generating 5 chronological races starting from "Now"
+    data = []
+    locations = ["Ascot", "Wolv", "Navan", "Sandown", "York"]
+    horses = ["Fast Lane", "Slow Burn", "Market Mover", "Desert Drift", "Silver Bullet"]
+    
+    for i in range(5):
+        race_time = (now + timedelta(minutes=15 * (i + 1))).strftime("%H:%M")
+        # Simulating odds and AI ratings
+        current_price = round(random.uniform(2.5, 8.0), 2)
+        ai_rated_price = round(random.uniform(2.5, 5.0), 2)
+        gap = round(current_price - ai_rated_price, 2)
         
-        status.update(label="Scan Complete!", state="complete", expanded=False)
+        data.append({
+            "Time": race_time,
+            "Location": locations[i],
+            "Horse": horses[i],
+            "AI Rated Price": ai_rated_price,
+            "Current Price": current_price,
+            "Value Gap": gap,
+            "Is_BH1": True if i == 2 else False # Simulating one BH1
+        })
+    return pd.DataFrame(data)
 
-    if qualifiers:
-        # Sort by largest value gap (Prioritizing the biggest drift)
-        qualifiers = sorted(qualifiers, key=lambda x: x['gap'], reverse=True)
-        
-        # RULE: Prioritize the drifter within range but NOT BH1. 
-        # But if BH1 is the biggest drift or only option, it's fine.
-        selection = None
-        non_bh1 = [q for q in qualifiers if not q['is_bh1']]
-        
-        if non_bh1:
-            selection = non_bh1[0] # Biggest drift that isn't BH1
+# --- SEARCH TRIGGER ---
+if st.button("🚀 Scan Next 5 Races"):
+    df = get_next_5_races()
+    
+    # IDENTIFY THE LAY SELECTION (Rules: Under 6.0, Largest Gap)
+    # Filter for those under 6.0 first
+    qualifiers = df[df["Current Price"] < 6.0].copy()
+    
+    lay_index = None
+    if not qualifiers.empty:
+        # Sort by Gap
+        qualifiers = qualifiers.sort_values(by="Value Gap", ascending=False)
+        # Apply BH1 Logic (Prioritize non-BH1 unless BH1 is the only/best)
+        non_bh1 = qualifiers[qualifiers["Is_BH1"] == False]
+        if not non_bh1.empty:
+            best_horse = non_bh1.iloc[0]["Horse"]
         else:
-            selection = qualifiers[0] # Use BH1 if it's the only/biggest drift
+            best_horse = qualifiers.iloc[0]["Horse"]
+        
+        lay_index = df[df["Horse"] == best_horse].index[0]
 
-        # --- THE OUTPUT TABLE ---
-        st.success(f"✅ Top Value Lay Found!")
-        
-        # Formatting for the requested a b c style or table
-        display_data = {
-            "Race": f"{selection['time']} {selection['loc']}",
-            "Selection": selection['horse'],
-            "Current Odds": selection['odds'],
-            "Value Gap": f"+{selection['gap']}"
-        }
-        
-        st.table([display_data])
-        
-        st.info("💡 **Selection Criteria:** Drifter under 6.0 with the largest verified value gap.")
+    # --- DISPLAY LOGIC ---
+    def highlight_lay(row):
+        if lay_index is not None and row.name == lay_index:
+            return ['background-color: #ff4b4b; color: white; font-weight: bold'] * len(row)
+        return [''] * len(row)
 
+    st.write("### 📊 Market Summary Table")
+    st.write("Note: The row highlighted in **Red** is your identified Lay Selection.")
+    
+    # Apply styling and display
+    styled_df = df.style.apply(highlight_lay, axis=1).format({
+        "AI Rated Price": "{:.2f}",
+        "Current Price": "{:.2f}",
+        "Value Gap": "+{:.2f}"
+    })
+    
+    st.table(styled_df)
+
+    if lay_index is None:
+        st.info("No selection currently qualifies (Price > 6.0 or no drift).")
     else:
-        st.warning("No qualifiers found under 6.0 right now.")
+        st.success(f"**Primary Lay Recommendation:** {df.iloc[lay_index]['Horse']} at {df.iloc[lay_index]['Time']}")
 
-# --- FOOTER ---
-st.divider()
-st.caption("Data refreshes on every click. Ensure markets are liquid before placing lays.")
+# --- HELP SECTION ---
+with st.expander("Criteria Legend"):
+    st.write("""
+    * **AI Rated Price:** What the horse *should* be priced at.
+    * **Current Price:** The actual live market price.
+    * **Value Gap:** The difference (Drift). A higher positive number means a bigger drift.
+    * **Red Highlight:** Meets all criteria: Under 6.0, High Drift, Priority Selection.
+    """)
