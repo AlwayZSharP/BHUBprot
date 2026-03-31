@@ -1,82 +1,82 @@
 import streamlit as st
 import pandas as pd
-import random
-from datetime import datetime, timedelta
+import easyocr
+import numpy as np
+from PIL import Image
+from streamlit_paste_button import paste_image_button as pbutton
 
 # --- APP CONFIG ---
-st.set_page_config(page_title="Global Lay Hub", page_icon="🏇", layout="wide")
+st.set_page_config(page_title="BHUB: Snap & Lay", layout="wide")
 
-st.title("🏇 Global Lay Hub: Live Radar")
-st.subheader("Next 5 Chronological Races & AI Value Analysis")
+st.title("🏇 BHUB: Snap & Lay Radar")
+st.write("Screenshot your Betfair market, then tap the button below.")
 
-# --- DATA GENERATOR ---
-def get_next_5_races():
-    now = datetime.now()
-    data = []
-    locations = ["Ascot", "Wolv", "Navan", "Sandown", "York"]
-    horses = ["Fast Lane", "Slow Burn", "Market Mover", "Desert Drift", "Silver Bullet"]
+# Load the OCR engine (cached for speed)
+@st.cache_resource
+def load_reader():
+    return easyocr.Reader(['en'])
+
+reader = load_reader()
+
+# --- THE PASTE BOX ---
+paste_result = pbutton(
+    label="📋 PASTE SCREENSHOT HERE",
+    background_color="#FF4B4B",
+    hover_background_color="#D33636",
+)
+
+# --- PROCESSING LOGIC ---
+if paste_result.image_data is not None:
+    # 1. Display the pasted image
+    st.image(paste_result.image_data, caption="Market Detected", width=300)
     
-    for i in range(5):
-        race_time = (now + timedelta(minutes=15 * (i + 1))).strftime("%H:%M")
-        # Current Price (Market)
-        current_price = round(random.uniform(2.5, 8.0), 2)
-        # AI Rated Price (Value)
-        ai_rated_price = round(random.uniform(2.5, 5.5), 2)
-        gap = round(current_price - ai_rated_price, 2)
+    with st.spinner("🤖 AI is matching prices with Betfair Hub..."):
+        # Convert pasted image to a format the AI can read
+        img = Image.open(paste_result.image_data)
+        img_np = np.array(img)
         
-        data.append({
-            "Time": race_time,
-            "Location": locations[i],
-            "Horse": horses[i],
-            "AI Rated": ai_rated_price,
-            "Current": current_price,
-            "Gap": gap,
-            "Is_BH1": True if i == 2 else False
-        })
-    return pd.DataFrame(data)
+        # OCR reads the horse names and odds
+        results = reader.readtext(img_np)
+        detected_text = " ".join([res[1] for res in results])
 
-# --- APP LOGIC ---
-if st.button("🚀 Scan Next 5 Races"):
-    df = get_next_5_races()
-    
-    # 1. Qualify: Under 6.0 and Drifting (Gap > 0)
-    qualifiers = df[(df["Current"] < 6.0) & (df["Gap"] > 0)].copy()
-    
-    lay_selection_horse = None
-    if not qualifiers.empty:
-        # Sort by Gap (Largest drift first)
-        qualifiers = qualifiers.sort_values(by="Gap", ascending=False)
-        # Rule: Priority to non-BH1
-        non_bh1 = qualifiers[qualifiers["Is_BH1"] == False]
-        if not non_bh1.empty:
-            lay_selection_horse = non_bh1.iloc[0]["Horse"]
+        # --- OPTION 2: AUTO-MATCHING DATA ---
+        # This part simulates the 'Scraper' finding the Hub AI prices 
+        # for whatever horses it just read in your screenshot.
+        hub_data = [
+            {"Horse": "Horse A", "AI Price": 3.40},
+            {"Horse": "Horse B", "AI Price": 4.10},
+            {"Horse": "Horse C", "AI Price": 5.50},
+        ]
+
+        summary_data = []
+        for item in hub_data:
+            # If the horse name from the Hub is found in your screenshot text:
+            if item["Horse"].lower() in detected_text.lower():
+                # We pull the live price (simulated for this example)
+                live_price = 5.20 
+                gap = round(live_price - item["AI Price"], 2)
+                
+                summary_data.append({
+                    "Horse": item["Horse"],
+                    "AI Rated": item["AI Price"],
+                    "Current": live_price,
+                    "Gap": gap,
+                    "Selection": "🎯 LAY" if (live_price < 6.0 and gap > 0.8) else "-"
+                })
+
+        # --- THE RESULT TABLE ---
+        if summary_data:
+            df = pd.DataFrame(summary_data)
+            
+            def highlight_row(row):
+                if "LAY" in str(row["Selection"]):
+                    return ['background-color: #ff4b4b; color: white; font-weight: bold'] * len(row)
+                return [''] * len(row)
+
+            st.write("### 📊 Live Value Analysis")
+            st.table(df.style.apply(highlight_row, axis=1).format({"Gap": "+{:.2f}"}))
         else:
-            lay_selection_horse = qualifiers.iloc[0]["Horse"]
+            st.warning("Could not match horses. Ensure names are clear in the screenshot.")
 
-    # --- THE SUMMARY TABLE ---
-    st.write("### 📊 Market Summary")
-
-    def make_pretty(row):
-        # If this horse is our chosen Lay, highlight the whole row RED
-        if lay_selection_horse and row["Horse"] == lay_selection_horse:
-            return ['background-color: #ff4b4b; color: white; font-weight: bold'] * len(row)
-        return [''] * len(row)
-
-    # Clean up the table for display
-    styled_df = df.style.apply(make_pretty, axis=1).format({
-        "AI Rated": "{:.2f}",
-        "Current": "{:.2f}",
-        "Gap": "+{:.2f}"
-    })
-
-    st.table(styled_df)
-
-    # --- FINAL VERDICT ---
-    if lay_selection_horse:
-        st.success(f"🎯 **LAY SELECTION:** {lay_selection_horse} (Highlighted Red)")
-    else:
-        st.info("ℹ️ No horse currently meets the 'Under 6.0 + Drift' criteria.")
-
-# --- FOOTER ---
 st.divider()
-st.caption("Evaluation includes the next 5 chronological races. Highlight indicates the optimal value drift.")
+st.caption("Instructions: Screenshot Betfair -> Tap 'Paste' button -> Get Lay.")
