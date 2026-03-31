@@ -5,40 +5,44 @@ import easyocr
 from streamlit_paste_button import paste_image_button as pbutton
 from datetime import datetime
 
-# --- APP CONFIG ---
-st.set_page_config(page_title="BHUB: Snap & Lay", layout="wide")
+# --- CONFIG ---
+st.set_page_config(page_title="BHUB: Streamlined Radar", layout="wide")
 st.title("🏇 BHUB: Streamlined Lay Radar")
 
-@st.cache_resource
-def load_reader():
-    return easyocr.Reader(['en'], gpu=False)
-
-# --- AUTO-FETCH RATINGS ---
-@st.cache_data(ttl=3600) # Refresh data every hour
-def fetch_hub_ratings():
+# --- AUTO-SYNC HUB DATA ---
+@st.cache_data(ttl=3600) # Refreshes every hour
+def get_hub_data():
     today = datetime.now().strftime("%Y-%m-%d")
-    # This is the direct data link for the Betfair Hub models (e.g., 'Kash' or 'Iggy')
+    # Official Kash Model CSV URL
     url = f"https://betfair-data-supplier-prod.herokuapp.com/api/widgets/kash-ratings-model/datasets?date={today}&presenter=RatingsPresenter&csv=true"
     try:
         df = pd.read_csv(url)
-        # Simplify the data to just: Horse Name -> Rated Price
-        # (Column names adjusted to match Betfair Hub's standard CSV export)
-        df.columns = [c.lower() for c in df.columns]
-        # We look for common name/rating columns
-        name_col = [c for c in df.columns if 'runner' in c or 'name' in c][0]
-        price_col = [c for c in df.columns if 'rated' in c or 'price' in c][0]
-        return dict(zip(df[name_col].str.lower(), df[price_col]))
-    except:
+        # Rename complex Hub columns to simple ones
+        df = df.rename(columns={
+            "meetings.races.runners.runnerName": "horse",
+            "meetings.races.runners.ratedPrice": "rating"
+        })
+        # Create a clean dictionary: {horse_name: rated_price}
+        return dict(zip(df['horse'].str.lower(), df['rating']))
+    except Exception as e:
+        st.sidebar.error(f"Sync Error: {e}")
         return {}
 
-# Load tools
-reader = load_reader()
-hub_db = fetch_hub_ratings()
+# Load AI Brain & Hub Data
+@st.cache_resource
+def load_ocr():
+    return easyocr.Reader(['en'], gpu=False)
 
-if not hub_db:
-    st.warning("⚠️ Could not auto-sync Betfair Hub ratings. Check internet or site status.")
+reader = load_ocr()
+hub_db = get_hub_data()
 
-# --- THE FAST-PASTE INTERFACE ---
+# Status Check
+if hub_db:
+    st.sidebar.success(f"✅ Synced {len(hub_db)} Hub Ratings")
+else:
+    st.sidebar.warning("⚠️ Hub Data not found for today yet.")
+
+# --- THE INTERFACE ---
 paste_result = pbutton(label="📋 PASTE SCREENSHOT HERE", background_color="#FF4B4B")
 
 if paste_result.image_data is not None:
@@ -46,36 +50,38 @@ if paste_result.image_data is not None:
     with st.spinner("🤖 Analyzing Market..."):
         img_np = np.array(img)
         results = reader.readtext(img_np)
+        
+        # Build a list of all text found in the photo
         all_text = " ".join([res[1].lower() for res in results])
 
         summary_data = []
-        for horse_name, ai_price in hub_db.items():
-            if horse_name in all_text:
-                # We found a match!
-                # In a real run, you'd want to parse the current price from OCR too.
-                # Here we assume a placeholder current price to show the logic.
-                current_price = 5.20 
-                gap = round(current_price - ai_price, 2)
+        for horse, ai_price in hub_db.items():
+            # MATCH: Is the Hub horse name in your screenshot?
+            if horse in all_text:
+                # To get the LIVE price from the photo, we look for the number 
+                # that appeared near that horse's name in the OCR results.
+                # For this streamlined version, we'll use a placeholder until we 
+                # refine the 'Number Grabber' logic for your specific phone screen.
+                live_price = 5.00 # Placeholder
+                gap = round(live_price - ai_price, 2)
                 
-                # YOUR RULES: Under 6.0 and Drifting
-                if current_price < 6.0:
+                # APPLY YOUR RULES: Under 6.0 and Drifting
+                if live_price < 6.0:
                     summary_data.append({
-                        "Horse": horse_name.title(),
+                        "Horse": horse.title(),
                         "AI Rated": ai_price,
-                        "Current": current_price,
+                        "Current": live_price,
                         "Gap": gap,
                         "Selection": "🎯 LAY" if gap > 0.4 else "-"
                     })
 
         if summary_data:
-            df_res = pd.DataFrame(summary_data)
-            # Prioritize the drifter with the largest gap
-            df_res = df_res.sort_values(by="Gap", ascending=False)
+            df_res = pd.DataFrame(summary_data).sort_values(by="Gap", ascending=False)
             
-            def highlight_row(row):
+            def highlight(row):
                 return ['background-color: #ff4b4b; color: white; font-weight: bold'] if "LAY" in str(row["Selection"]) else [''] * len(row)
             
             st.write("### 📊 Value Analysis")
-            st.table(df_res.style.apply(highlight_row, axis=1).format({"Gap": "+{:.2f}"}))
+            st.table(df_res.style.apply(highlight, axis=1).format({"Gap": "+{:.2f}"}))
         else:
-            st.error("Could not find any horses from the screenshot in today's Hub Ratings.")
+            st.error("No matches found. Ensure the horse names are clear.")
