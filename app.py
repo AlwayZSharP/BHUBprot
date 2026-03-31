@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import random
 from datetime import datetime, timedelta
 
 # --- APP CONFIG ---
@@ -8,81 +9,74 @@ st.set_page_config(page_title="Global Lay Hub", page_icon="🏇", layout="wide")
 st.title("🏇 Global Lay Hub: Live Radar")
 st.subheader("Next 5 Chronological Races & AI Value Analysis")
 
-# --- SIMULATED LIVE FEED ---
+# --- DATA GENERATOR ---
 def get_next_5_races():
     now = datetime.now()
-    # Generating 5 chronological races starting from "Now"
     data = []
     locations = ["Ascot", "Wolv", "Navan", "Sandown", "York"]
     horses = ["Fast Lane", "Slow Burn", "Market Mover", "Desert Drift", "Silver Bullet"]
     
     for i in range(5):
         race_time = (now + timedelta(minutes=15 * (i + 1))).strftime("%H:%M")
-        # Simulating odds and AI ratings
+        # Current Price (Market)
         current_price = round(random.uniform(2.5, 8.0), 2)
-        ai_rated_price = round(random.uniform(2.5, 5.0), 2)
+        # AI Rated Price (Value)
+        ai_rated_price = round(random.uniform(2.5, 5.5), 2)
         gap = round(current_price - ai_rated_price, 2)
         
         data.append({
             "Time": race_time,
             "Location": locations[i],
             "Horse": horses[i],
-            "AI Rated Price": ai_rated_price,
-            "Current Price": current_price,
-            "Value Gap": gap,
-            "Is_BH1": True if i == 2 else False # Simulating one BH1
+            "AI Rated": ai_rated_price,
+            "Current": current_price,
+            "Gap": gap,
+            "Is_BH1": True if i == 2 else False
         })
     return pd.DataFrame(data)
 
-# --- SEARCH TRIGGER ---
+# --- APP LOGIC ---
 if st.button("🚀 Scan Next 5 Races"):
     df = get_next_5_races()
     
-    # IDENTIFY THE LAY SELECTION (Rules: Under 6.0, Largest Gap)
-    # Filter for those under 6.0 first
-    qualifiers = df[df["Current Price"] < 6.0].copy()
+    # 1. Qualify: Under 6.0 and Drifting (Gap > 0)
+    qualifiers = df[(df["Current"] < 6.0) & (df["Gap"] > 0)].copy()
     
-    lay_index = None
+    lay_selection_horse = None
     if not qualifiers.empty:
-        # Sort by Gap
-        qualifiers = qualifiers.sort_values(by="Value Gap", ascending=False)
-        # Apply BH1 Logic (Prioritize non-BH1 unless BH1 is the only/best)
+        # Sort by Gap (Largest drift first)
+        qualifiers = qualifiers.sort_values(by="Gap", ascending=False)
+        # Rule: Priority to non-BH1
         non_bh1 = qualifiers[qualifiers["Is_BH1"] == False]
         if not non_bh1.empty:
-            best_horse = non_bh1.iloc[0]["Horse"]
+            lay_selection_horse = non_bh1.iloc[0]["Horse"]
         else:
-            best_horse = qualifiers.iloc[0]["Horse"]
-        
-        lay_index = df[df["Horse"] == best_horse].index[0]
+            lay_selection_horse = qualifiers.iloc[0]["Horse"]
 
-    # --- DISPLAY LOGIC ---
-    def highlight_lay(row):
-        if lay_index is not None and row.name == lay_index:
+    # --- THE SUMMARY TABLE ---
+    st.write("### 📊 Market Summary")
+
+    def make_pretty(row):
+        # If this horse is our chosen Lay, highlight the whole row RED
+        if lay_selection_horse and row["Horse"] == lay_selection_horse:
             return ['background-color: #ff4b4b; color: white; font-weight: bold'] * len(row)
         return [''] * len(row)
 
-    st.write("### 📊 Market Summary Table")
-    st.write("Note: The row highlighted in **Red** is your identified Lay Selection.")
-    
-    # Apply styling and display
-    styled_df = df.style.apply(highlight_lay, axis=1).format({
-        "AI Rated Price": "{:.2f}",
-        "Current Price": "{:.2f}",
-        "Value Gap": "+{:.2f}"
+    # Clean up the table for display
+    styled_df = df.style.apply(make_pretty, axis=1).format({
+        "AI Rated": "{:.2f}",
+        "Current": "{:.2f}",
+        "Gap": "+{:.2f}"
     })
-    
+
     st.table(styled_df)
 
-    if lay_index is None:
-        st.info("No selection currently qualifies (Price > 6.0 or no drift).")
+    # --- FINAL VERDICT ---
+    if lay_selection_horse:
+        st.success(f"🎯 **LAY SELECTION:** {lay_selection_horse} (Highlighted Red)")
     else:
-        st.success(f"**Primary Lay Recommendation:** {df.iloc[lay_index]['Horse']} at {df.iloc[lay_index]['Time']}")
+        st.info("ℹ️ No horse currently meets the 'Under 6.0 + Drift' criteria.")
 
-# --- HELP SECTION ---
-with st.expander("Criteria Legend"):
-    st.write("""
-    * **AI Rated Price:** What the horse *should* be priced at.
-    * **Current Price:** The actual live market price.
-    * **Value Gap:** The difference (Drift). A higher positive number means a bigger drift.
-    * **Red Highlight:** Meets all criteria: Under 6.0, High Drift, Priority Selection.
-    """)
+# --- FOOTER ---
+st.divider()
+st.caption("Evaluation includes the next 5 chronological races. Highlight indicates the optimal value drift.")
