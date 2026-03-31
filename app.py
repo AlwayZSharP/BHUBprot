@@ -11,7 +11,7 @@ st.set_page_config(page_title="BHUB: Snap & Lay", layout="wide")
 st.title("🏇 BHUB: Snap & Lay Radar")
 st.write("Screenshot your Betfair market, then tap the button below.")
 
-# Load the OCR engine (cached for speed)
+# Load the OCR engine
 @st.cache_resource
 def load_reader():
     return easyocr.Reader(['en'])
@@ -27,41 +27,42 @@ paste_result = pbutton(
 
 # --- PROCESSING LOGIC ---
 if paste_result.image_data is not None:
-    # 1. Display the pasted image
-    st.image(paste_result.image_data, caption="Market Detected", width=300)
+    # IMPORTANT: paste_result.image_data is already a PIL Image!
+    # No need for Image.open()
+    img = paste_result.image_data 
+    st.image(img, caption="Market Detected", width=300)
     
     with st.spinner("🤖 AI is matching prices with Betfair Hub..."):
-        # Convert pasted image to a format the AI can read
-        img = Image.open(paste_result.image_data)
+        # Convert image to a format the OCR can read
         img_np = np.array(img)
-        
-        # OCR reads the horse names and odds
         results = reader.readtext(img_np)
-        detected_text = " ".join([res[1] for res in results])
+        
+        # This combines all the text found in the image into one string
+        all_detected_text = " ".join([res[1].lower() for res in results])
 
-        # --- OPTION 2: AUTO-MATCHING DATA ---
-        # This part simulates the 'Scraper' finding the Hub AI prices 
-        # for whatever horses it just read in your screenshot.
+        # --- SIMULATED DATA (This is where your Hub scraper lives) ---
         hub_data = [
-            {"Horse": "Horse A", "AI Price": 3.40},
-            {"Horse": "Horse B", "AI Price": 4.10},
-            {"Horse": "Horse C", "AI Price": 5.50},
+            {"Horse": "Fast Lane", "AI Price": 3.40},
+            {"Horse": "Slow Burn", "AI Price": 4.10},
+            {"Horse": "Desert Drift", "AI Price": 5.50},
+            {"Horse": "Silver Bullet", "AI Price": 4.20},
         ]
 
         summary_data = []
         for item in hub_data:
-            # If the horse name from the Hub is found in your screenshot text:
-            if item["Horse"].lower() in detected_text.lower():
-                # We pull the live price (simulated for this example)
-                live_price = 5.20 
-                gap = round(live_price - item["AI Price"], 2)
+            # Check if the horse name from the Hub appears anywhere in your photo
+            if item["Horse"].lower() in all_detected_text:
+                # Simulated current price - in a real version we'd parse the numbers
+                # located physically next to the horse's name in the image.
+                current_price = 5.20 
+                gap = round(current_price - item["AI Price"], 2)
                 
                 summary_data.append({
                     "Horse": item["Horse"],
                     "AI Rated": item["AI Price"],
-                    "Current": live_price,
+                    "Current": current_price,
                     "Gap": gap,
-                    "Selection": "🎯 LAY" if (live_price < 6.0 and gap > 0.8) else "-"
+                    "Selection": "🎯 LAY" if (current_price < 6.0 and gap > 0.5) else "-"
                 })
 
         # --- THE RESULT TABLE ---
@@ -76,7 +77,8 @@ if paste_result.image_data is not None:
             st.write("### 📊 Live Value Analysis")
             st.table(df.style.apply(highlight_row, axis=1).format({"Gap": "+{:.2f}"}))
         else:
-            st.warning("Could not match horses. Ensure names are clear in the screenshot.")
+            st.warning("⚠️ No matches found. Make sure the horse names are visible in the screenshot.")
+            st.write("Words detected in your photo:", all_detected_text)
 
 st.divider()
 st.caption("Instructions: Screenshot Betfair -> Tap 'Paste' button -> Get Lay.")
